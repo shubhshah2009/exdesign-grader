@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ExDesign Grader</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+
+  <div class="masthead">
+    <div>
+      <h1>ExDesign Grader <span class="tag">Div B · 2026</span></h1>
+      <div class="sub">Shared with anyone who opens this site. Build the roster as you go, grade with the report right next to the checklist.</div>
+    </div>
+  </div>
+
+  <div class="inv-bar">
+    <div class="field">
+      <label>Invitational</label>
+      <select id="invSelect" style="min-width:220px;"><option value="">— select or create —</option></select>
+    </div>
+    <div class="field">
+      <label>New invitational</label>
+      <div style="display:flex;gap:6px;">
+        <input id="newInvName" placeholder="e.g. Rickards Invitational" style="width:200px;">
+        <button class="btn small teal" id="createInvBtn">Create</button>
+      </div>
+    </div>
+    <div class="field">
+      <label>Judging level</label>
+      <div class="level-toggle" id="levelToggle">
+        <button data-level="regional" class="active">Regional</button>
+        <button data-level="state">State / Nationals</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="statusBanner" class="loading-banner"></div>
+
+  <div id="invContent" style="display:none;">
+    <div class="roster-card">
+      <h3 id="rosterHeading">Roster</h3>
+      <div class="roster-add">
+        <input id="addNumber" placeholder="Team #" style="width:90px;">
+        <input id="addName" placeholder="Team / school name" style="width:220px;">
+        <button class="btn small ghost" id="addTeamBtn">+ Add to roster</button>
+      </div>
+      <div class="roster-list" id="rosterList"></div>
+      <div class="empty-note" id="rosterEmpty" style="display:none;">No teams yet — add one above, or just start grading and assign the number later.</div>
+    </div>
+
+    <div id="gradingArea" style="display:none;">
+      <div class="grading-layout">
+        <div class="panel image-panel">
+          <h3>Report Pages</h3>
+          <div class="upload-zone" id="dropZone">Click or drag in photos or a PDF of this team's report</div>
+          <input type="file" id="fileInput" accept="image/*,.pdf" multiple style="display:none">
+          <div class="main-image-viewer">
+            <button class="page-nav" id="prevPageBtn" aria-label="Previous page">‹</button>
+            <div class="main-image-wrap" id="mainImageWrap"></div>
+            <button class="page-nav" id="nextPageBtn" aria-label="Next page">›</button>
+          </div>
+          <div class="page-indicator" id="pageIndicator"></div>
+          <div class="img-thumbs" id="imgThumbs"></div>
+          <div id="finalizedNote" class="finalized-note" style="display:none;">Photos were cleared when this team was finalized. Scores and the report are still saved.</div>
+        </div>
+
+        <div class="main" id="sectionStepper"></div>
+
+        <div class="sidebar">
+          <div class="totals-card">
+            <h3>Score Summary</h3>
+            <div class="totals-row"><span>Part I — Design</span><span id="totPart1" class="mono">0 / 51</span></div>
+            <div class="totals-row"><span>Part II — Data &amp; Analysis</span><span id="totPart2" class="mono">0 / 55</span></div>
+            <div class="totals-row"><span>Raw Total</span><span id="totRaw" class="mono">0</span></div>
+            <div class="totals-row"><span>Multiplier</span><span id="totMult" class="mono">×1.00</span></div>
+            <div class="totals-row grand"><span>Final</span><span id="totFinal">0</span></div>
+          </div>
+          <div class="mult-card">
+            <label><input type="checkbox" id="multMaterials"> ×0.95 — didn't use ≥2 materials / no clean-up</label>
+            <label><input type="checkbox" id="multFake"> ×0.25 — non-lab / falsified data</label>
+            <div class="row-label"><span>Off-topic multiplier</span><span id="offTopicVal">1.00</span></div>
+            <input type="range" id="multOffTopic" min="0.75" max="1" step="0.05" value="1">
+            <div class="tiebreak"><strong>Tiebreak order:</strong> K → E → C → G → H</div>
+          </div>
+          <div class="report-card">
+            <h3>Score Report</h3>
+            <textarea id="reportText" readonly></textarea>
+            <button class="btn ghost" id="copyReportBtn">Copy Report</button>
+          </div>
+          <div class="finalize-card">
+            <h3 style="text-transform:uppercase;font-size:12px;color:var(--ink-soft);margin:0 0 8px;">Done Grading This Team?</h3>
+            <p>Deletes the uploaded photos from storage to free up space. Scores and the report stay saved.</p>
+            <button class="btn danger" id="finalizeBtn">Finalize &amp; Delete Photos</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="lightboxRoot"></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
