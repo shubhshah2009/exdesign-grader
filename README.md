@@ -1,15 +1,16 @@
-# ExDesign Grader
+# ExDesign Grader RSOI 26-27
 
-A shared web tool for grading Science Olympiad Experimental Design (Division B) reports
-against the official 2026 checklist. Upload photos or a PDF of a team's report, step
-through the rubric section by section with the report page right next to it, and get a
-copy-pasteable score report at the end.
+A shared web tool built specifically for grading Science Olympiad Experimental Design
+reports at Rickards Invitational, Division B and Division C, against the official
+2026 checklists. Upload photos or a PDF of a team's report, step through the rubric
+section by section with the report page right next to it — including the exact
+judging criteria for each line item — and get a copy-pasteable score report at the end.
 
 This is a plain static site (`index.html` + `style.css` + `app.js`) — no build step,
 no framework. It uses:
 - **Supabase (Postgres + Storage)** — free, shared database so every judge who opens
-  the site sees the same invitational, roster, and grading progress. No credit card
-  required for the free tier.
+  the site sees the same roster and grading progress for each division. No credit
+  card required for the free tier.
 - **GitHub Pages** — free hosting for the site itself.
 
 The best way to actually get this running is to open this whole folder in
@@ -26,8 +27,9 @@ into a terminal by hand.
    database password (you won't need it again — the app doesn't use it) → pick any
    region → Create project. Wait a minute or two for it to finish provisioning.
 2. Left sidebar: **SQL Editor → New query** → paste in the entire contents of
-   `supabase-schema.sql` from this folder → **Run**. This creates the two tables the
-   app needs, opens them up with starter access policies, and creates the
+   `supabase-schema.sql` from this folder → **Run**. This creates the `teams` table
+   (keyed by division + team number) and a shared `event_settings` row for the
+   Regional/State toggle, opens them up with starter access policies, and creates the
    `report-photos` storage bucket.
 3. Left sidebar: **Project Settings → API**. Copy the **Project URL** and the
    **anon public** key into `supabase-config.js` in this folder, replacing the
@@ -59,18 +61,23 @@ into a terminal by hand.
 ## 3. Using it
 
 - Open the GitHub Pages URL in Chrome (or any browser).
-- Create an invitational (e.g. "Rickards Invitational") — this is now shared: anyone
-  who opens the same link and selects it sees the same roster and scores.
-- Add teams to the roster as you get them, in any order, any time.
+- Pick **Division B** or **Division C** at the top — each has its own roster and its
+  own rubric (they're structurally different checklists). Set the **Judging level**
+  (Regional / State-Nationals) once for the whole event; it's shared across everyone
+  who opens the link.
+- Add teams to the roster as you get them, in any order, any time. Each roster row has
+  a **Delete** button if you need to remove a team entirely (scores, photos, everything).
 - Click **Grade** on a team, then upload photos or a PDF of their report — a PDF gets
   split into individual page images automatically.
 - The report page is shown large on the left, with a thumbnail strip to jump to any
   page. Step through the rubric section by section (A, B, C, …) using the section tabs
-  or the Next/Previous buttons — each section shows the exact wording of what's being
-  checked, right next to the report.
+  or the Next/Previous buttons — each item shows the exact judging criteria (straight
+  from the event supervisor scoring guide) right next to the report. The displayed
+  report page follows you as you move between sections — flip to a different page
+  while on a section and it's remembered next time you return to that section.
 - When you're done with a team, click **Finalize & Delete Photos** — this removes the
-  uploaded images from Supabase Storage to keep it light, while keeping the scores and
-  the copy-pasteable score report.
+  uploaded images from Supabase Storage to keep it light, keeps the scores and the
+  copy-pasteable score report, and returns you to the roster.
 - Copy the **Score Report** box and send it straight to the team.
 
 ## Costs
@@ -83,7 +90,7 @@ invitational's worth of judging — this whole setup should cost nothing.
 ```
 index.html            the page
 style.css              styling
-app.js                 all the app logic (rubric, Supabase, grading UI)
+app.js                 all the app logic (Division B & C rubrics, Supabase, grading UI)
 supabase-config.js     your Supabase project URL + anon key (safe to commit)
 supabase-schema.sql    table + storage bucket setup to run once in Supabase's SQL Editor
 ```
