@@ -12,9 +12,12 @@
 <div id="app">
 
   <div class="masthead">
-    <div>
-      <h1>ExDesign Grader <span class="tag">RSOI 26-27</span></h1>
-      <div class="sub">Rickards Invitational — Experimental Design. Shared with anyone who opens this site.</div>
+    <div class="masthead-title">
+      <img src="logo.png" alt="Rickards Invitational" class="masthead-logo">
+      <div>
+        <h1>ExDesign Grader <span class="tag">RSOI 26-27</span></h1>
+        <div class="sub">Rickards Invitational — Experimental Design. Shared with anyone who opens this site.</div>
+      </div>
     </div>
   </div>
 
@@ -43,11 +46,13 @@
       <input id="addNumber" placeholder="e.g. 14 → B14" style="width:100px;">
       <input id="addName" placeholder="Team / school name" style="width:220px;">
       <button class="btn small ghost" id="addTeamBtn">+ Add to roster</button>
-      <button class="btn small ghost" id="bulkAddToggleBtn">Bulk Add…</button>
+      <button class="btn small ghost" id="bulkAddToggleBtn">Add Multiple Teams at Once…</button>
+      <button class="btn small ghost" id="exportCsvBtn">⬇ Export Scores (CSV)</button>
     </div>
     <div class="bulk-add" id="bulkAddPanel" style="display:none;">
-      <textarea id="bulkAddText" placeholder="One team per line: number, name&#10;e.g.&#10;14, Rickards High School&#10;15, Wakulla High School"></textarea>
-      <button class="btn small teal" id="bulkAddBtn">Add All</button>
+      <p class="bulk-add-help">Paste a whole roster here, <strong>one team per line</strong>, as <code>number, name</code> — then click Add All to create every team at once instead of one at a time.</p>
+      <textarea id="bulkAddText" placeholder="14, Rickards High School&#10;15, Wakulla High School&#10;16, Leon High School"></textarea>
+      <button class="btn small teal" id="bulkAddBtn">Add All Teams Listed Above</button>
     </div>
     <input id="rosterSearch" class="roster-search" placeholder="Search by team # or name…">
     <div class="roster-list" id="rosterList"></div>
@@ -64,10 +69,6 @@
           <button class="page-nav" id="prevPageBtn" aria-label="Previous page">‹</button>
           <div class="main-image-wrap" id="mainImageWrap"></div>
           <button class="page-nav" id="nextPageBtn" aria-label="Next page">›</button>
-        </div>
-        <div class="crop-controls">
-          <button class="btn small ghost" id="cropModeBtn">✂ Crop to This Section</button>
-          <button class="btn small ghost" id="resetCropBtn" style="display:none;">Show Full Page</button>
         </div>
         <div class="page-indicator" id="pageIndicator"></div>
         <div class="img-thumbs" id="imgThumbs"></div>

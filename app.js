@@ -312,7 +312,6 @@ let saveTimer = null;
 let pendingSave = false;
 let currentSectionIdx = 0;
 let currentImageIdx = 0;
-let sectionPageIndex = {}; // {sectionId: imageIdx} - "pinned" page per rubric section
 
 function SECTIONS(){ return DIVISIONS[division]; }
 function visibleSections(){ return SECTIONS().filter(sec=>sec.items.some(isVisible)); }
@@ -379,51 +378,18 @@ function renderSectionStepper(){
     const refocus = root.querySelector(`.stepper-item[data-item-id="${id}"]`);
     if(refocus) refocus.focus();
   }));
-  document.getElementById('prevSectionBtn').addEventListener('click',()=>{ if(currentSectionIdx>0) goToSection(currentSectionIdx-1,'prev'); });
-  document.getElementById('nextSectionBtn').addEventListener('click',()=>{ if(currentSectionIdx<sections.length-1) goToSection(currentSectionIdx+1,'next'); });
+  document.getElementById('prevSectionBtn').addEventListener('click',()=>{ if(currentSectionIdx>0) goToSection(currentSectionIdx-1); });
+  document.getElementById('nextSectionBtn').addEventListener('click',()=>{ if(currentSectionIdx<sections.length-1) goToSection(currentSectionIdx+1); });
 }
 
-// sectionPageIndex[sectionId] is either the legacy shape (a plain page-index
-// number, from data saved before cropping existed) or the current shape
-// {page, crop:{x,y,w,h}|null}. getSectionView() normalizes both to the latter.
-function getSectionView(sectionId){
-  const v = sectionPageIndex[sectionId];
-  if(v==null) return null;
-  if(typeof v === 'number') return {page: v, crop: null};
-  return v;
-}
-function setSectionPage(sectionId, page){
-  sectionPageIndex[sectionId] = {page, crop: null};
-  queueSave();
-}
-function setSectionCrop(sectionId, crop){
-  const existing = getSectionView(sectionId);
-  sectionPageIndex[sectionId] = {page: existing?.page ?? currentImageIdx, crop};
-  queueSave();
-}
-
-function goToSection(idx, direction){
+// Which rubric section is showing and which report page is showing are
+// completely independent — switching sections never changes the page, and
+// paging through images never changes the section. Organize the uploaded
+// pages once (see the reorder buttons on each thumbnail) and they just stay
+// in that order regardless of where you are in the checklist.
+function goToSection(idx){
   currentSectionIdx = idx;
-  const sec = visibleSections()[idx];
-  if(sec){
-    const view = getSectionView(sec.id);
-    if(view!=null && view.page<images.length){
-      currentImageIdx = view.page;
-    } else {
-      if(direction==='next' && currentImageIdx<images.length-1) currentImageIdx++;
-      else if(direction==='prev' && currentImageIdx>0) currentImageIdx--;
-      // else (direct tab-click jump, no page recorded yet): carry forward
-      // whatever page is showing rather than guessing.
-      //
-      // Either way, remember this as the section's page now, on first visit —
-      // so coming back to this section later (Next, Previous, or a tab click)
-      // always shows the same page consistently, not a re-derived guess that
-      // could differ depending on which direction you approached it from.
-      setSectionPage(sec.id, currentImageIdx);
-    }
-  }
   renderSectionStepper();
-  renderMainImage(); renderThumbs();
 }
 
 function reconcileSectionIndex(prevSectionId){
@@ -500,101 +466,14 @@ const dropZone=document.getElementById('dropZone'), fileInput=document.getElemen
 const imgThumbs=document.getElementById('imgThumbs');
 const mainImageWrap=document.getElementById('mainImageWrap'), pageIndicator=document.getElementById('pageIndicator');
 const prevPageBtn=document.getElementById('prevPageBtn'), nextPageBtn=document.getElementById('nextPageBtn');
-const cropModeBtn=document.getElementById('cropModeBtn'), resetCropBtn=document.getElementById('resetCropBtn');
 
 dropZone.addEventListener('click',()=>{ if(!finalized) fileInput.click(); });
 dropZone.addEventListener('dragover',(e)=>{e.preventDefault(); if(!finalized) dropZone.classList.add('dragover');});
 dropZone.addEventListener('dragleave',()=>dropZone.classList.remove('dragover'));
 dropZone.addEventListener('drop',(e)=>{e.preventDefault(); dropZone.classList.remove('dragover'); if(!finalized) handleFiles(e.dataTransfer.files);});
 fileInput.addEventListener('change',()=>handleFiles(fileInput.files));
-prevPageBtn.addEventListener('click',()=>{ if(currentImageIdx>0){ currentImageIdx--; pinCurrentPage(); renderMainImage(); renderThumbs(); } });
-nextPageBtn.addEventListener('click',()=>{ if(currentImageIdx<images.length-1){ currentImageIdx++; pinCurrentPage(); renderMainImage(); renderThumbs(); } });
-
-function pinCurrentPage(){
-  const sec = visibleSections()[currentSectionIdx];
-  if(sec) setSectionPage(sec.id, currentImageIdx); // manual page nav always clears any crop for this section
-}
-
-/* ---------- CROP TOOL ---------- */
-let cropMode = false;
-let cropDragStart = null, cropDragBox = null;
-
-cropModeBtn.addEventListener('click', ()=>{
-  if(images.length===0) return;
-  cropMode = !cropMode;
-  renderMainImage();
-});
-resetCropBtn.addEventListener('click', ()=>{
-  const sec = visibleSections()[currentSectionIdx];
-  if(sec) setSectionCrop(sec.id, null);
-  renderMainImage();
-});
-
-mainImageWrap.addEventListener('mousedown', (e)=>{
-  if(!cropMode) return;
-  const img = mainImageWrap.querySelector('img');
-  if(!img) return;
-  const rect = mainImageWrap.getBoundingClientRect();
-  cropDragStart = {x: e.clientX-rect.left, y: e.clientY-rect.top};
-  cropDragBox = document.createElement('div');
-  cropDragBox.className = 'crop-box';
-  mainImageWrap.appendChild(cropDragBox);
-  updateCropDragBox(e);
-  document.addEventListener('mousemove', onCropDrag);
-  document.addEventListener('mouseup', endCropDrag);
-  e.preventDefault();
-});
-function onCropDrag(e){ updateCropDragBox(e); }
-function updateCropDragBox(e){
-  const rect = mainImageWrap.getBoundingClientRect();
-  const x2 = Math.max(0, Math.min(rect.width, e.clientX-rect.left));
-  const y2 = Math.max(0, Math.min(rect.height, e.clientY-rect.top));
-  const x = Math.min(cropDragStart.x, x2), y = Math.min(cropDragStart.y, y2);
-  const w = Math.abs(x2-cropDragStart.x), h = Math.abs(y2-cropDragStart.y);
-  cropDragBox.style.left = x+'px'; cropDragBox.style.top = y+'px';
-  cropDragBox.style.width = w+'px'; cropDragBox.style.height = h+'px';
-}
-function endCropDrag(e){
-  document.removeEventListener('mousemove', onCropDrag);
-  document.removeEventListener('mouseup', endCropDrag);
-  const img = mainImageWrap.querySelector('img');
-  if(img && cropDragBox){
-    const boxRect = cropDragBox.getBoundingClientRect();
-    const imgRect = img.getBoundingClientRect();
-    let x = (boxRect.left - imgRect.left) / imgRect.width;
-    let y = (boxRect.top - imgRect.top) / imgRect.height;
-    let w = boxRect.width / imgRect.width;
-    let h = boxRect.height / imgRect.height;
-    x = Math.max(0, Math.min(1, x)); y = Math.max(0, Math.min(1, y));
-    w = Math.min(1-x, w); h = Math.min(1-y, h);
-    if(w>0.03 && h>0.03){
-      const sec = visibleSections()[currentSectionIdx];
-      if(sec) setSectionCrop(sec.id, {x,y,w,h});
-    }
-  }
-  if(cropDragBox) cropDragBox.remove();
-  cropDragBox = null; cropDragStart = null;
-  cropMode = false;
-  renderMainImage();
-}
-function cropImageToDataUrl(src, crop){
-  return new Promise((resolve, reject)=>{
-    const img = new Image();
-    img.crossOrigin = 'anonymous'; // needed to read pixels back out via canvas for hosted (Supabase Storage) photos
-    img.onload = ()=>{
-      try{
-        const sx = crop.x*img.naturalWidth, sy = crop.y*img.naturalHeight;
-        const sw = Math.max(1, crop.w*img.naturalWidth), sh = Math.max(1, crop.h*img.naturalHeight);
-        const canvas = document.createElement('canvas');
-        canvas.width = sw; canvas.height = sh;
-        canvas.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
-        resolve(canvas.toDataURL('image/jpeg', 0.85));
-      }catch(err){ reject(err); }
-    };
-    img.onerror = ()=>reject(new Error('crop image failed to load'));
-    img.src = src;
-  });
-}
+prevPageBtn.addEventListener('click',()=>{ if(currentImageIdx>0){ currentImageIdx--; renderMainImage(); renderThumbs(); } });
+nextPageBtn.addEventListener('click',()=>{ if(currentImageIdx<images.length-1){ currentImageIdx++; renderMainImage(); renderThumbs(); } });
 
 function compressImage(file){
   return new Promise((resolve)=>{
@@ -642,61 +521,34 @@ async function handleFiles(list){
   renderThumbs(); renderMainImage();
   await uploadNewImagesToStorage();
 }
-let mainImageRenderGen = 0;
-async function renderMainImage(){
-  const gen = ++mainImageRenderGen;
+function renderMainImage(){
   if(images.length===0){
     mainImageWrap.innerHTML = '<div class="empty-note">No pages uploaded yet.</div>';
     pageIndicator.textContent = '';
     prevPageBtn.disabled = true; nextPageBtn.disabled = true;
-    cropModeBtn.style.display = 'none'; resetCropBtn.style.display = 'none';
-    mainImageWrap.classList.remove('crop-active');
     return;
   }
   if(currentImageIdx>=images.length) currentImageIdx = images.length-1;
   if(currentImageIdx<0) currentImageIdx = 0;
   const im = images[currentImageIdx];
-  const fullSrc = im.url || `data:${im.mediaType};base64,${im.base64}`;
-  const sec = visibleSections()[currentSectionIdx];
-  const view = sec ? getSectionView(sec.id) : null;
-  const hasCrop = !!(view && view.crop);
-  const showCrop = hasCrop && !cropMode;
-
-  let displaySrc = fullSrc;
-  if(showCrop){
-    try{
-      displaySrc = await cropImageToDataUrl(fullSrc, view.crop);
-    }catch(err){
-      console.error('crop render failed, showing full page instead', err);
-      displaySrc = fullSrc;
-    }
-    if(gen!==mainImageRenderGen) return; // a newer render started while this awaited
-  }
-
-  mainImageWrap.classList.toggle('crop-active', cropMode);
-  mainImageWrap.innerHTML = `<img src="${displaySrc}">`;
-  if(cropMode){
-    const hint = document.createElement('div');
-    hint.className = 'crop-hint';
-    hint.textContent = 'Drag to select the region for this section';
-    mainImageWrap.appendChild(hint);
-  } else {
-    mainImageWrap.querySelector('img').addEventListener('click',()=>openLightbox(fullSrc));
-  }
-  pageIndicator.textContent = `Page ${currentImageIdx+1} of ${images.length}${showCrop?' (cropped to section)':''}`;
+  const src = im.url || `data:${im.mediaType};base64,${im.base64}`;
+  mainImageWrap.innerHTML = `<img src="${src}">`;
+  mainImageWrap.querySelector('img').addEventListener('click',()=>openLightbox(src));
+  pageIndicator.textContent = `Page ${currentImageIdx+1} of ${images.length}`;
   prevPageBtn.disabled = currentImageIdx===0;
   nextPageBtn.disabled = currentImageIdx===images.length-1;
-  cropModeBtn.style.display = 'inline-block';
-  cropModeBtn.textContent = cropMode ? 'Cancel Crop' : '✂ Crop to This Section';
-  resetCropBtn.style.display = (hasCrop && !cropMode) ? 'inline-block' : 'none';
 }
 function renderThumbs(){
   imgThumbs.innerHTML='';
   images.forEach((im,i)=>{
     const src = im.url || `data:${im.mediaType};base64,${im.base64}`;
     const wrap=document.createElement('div'); wrap.className='img-thumb-wrap' + (i===currentImageIdx?' active':'');
-    wrap.innerHTML = `<img src="${src}"><button class="rm" data-i="${i}">×</button>`;
-    wrap.querySelector('img').addEventListener('click',()=>{ currentImageIdx=i; pinCurrentPage(); renderMainImage(); renderThumbs(); });
+    wrap.innerHTML = `<img src="${src}"><button class="rm" data-i="${i}">×</button>
+      <div class="thumb-reorder">
+        <button class="reorder-btn" data-move="left" data-i="${i}" ${i===0?'disabled':''} title="Move earlier">‹</button>
+        <button class="reorder-btn" data-move="right" data-i="${i}" ${i===images.length-1?'disabled':''} title="Move later">›</button>
+      </div>`;
+    wrap.querySelector('img').addEventListener('click',()=>{ currentImageIdx=i; renderMainImage(); renderThumbs(); });
     imgThumbs.appendChild(wrap);
   });
   imgThumbs.querySelectorAll('.rm').forEach(b=>b.addEventListener('click', async (e)=>{
@@ -706,19 +558,18 @@ function renderThumbs(){
     if(im.storagePath){ try{ await supabase.storage.from(PHOTOS_BUCKET).remove([im.storagePath]); }catch(err){ console.warn(err); } }
     images.splice(i,1);
     if(currentImageIdx>=i) currentImageIdx = Math.max(0, currentImageIdx-1);
-    reindexSectionPagesAfterDelete(i);
     renderThumbs(); renderMainImage(); await saveCurrentTeam();
   }));
-}
-// Deleting page i shifts every later page down by one; any section pinned to
-// exactly page i loses that page (falls back to re-deriving next visit), and
-// anything pinned past it shifts down to match, crop rectangle included.
-function reindexSectionPagesAfterDelete(deletedIdx){
-  for(const secId of Object.keys(sectionPageIndex)){
-    const v = getSectionView(secId);
-    if(v.page === deletedIdx) delete sectionPageIndex[secId];
-    else if(v.page > deletedIdx) sectionPageIndex[secId] = {page: v.page-1, crop: v.crop};
-  }
+  imgThumbs.querySelectorAll('.reorder-btn').forEach(b=>b.addEventListener('click', async (e)=>{
+    e.stopPropagation();
+    const i = Number(b.dataset.i);
+    const j = b.dataset.move==='left' ? i-1 : i+1;
+    if(j<0 || j>=images.length) return;
+    [images[i], images[j]] = [images[j], images[i]];
+    if(currentImageIdx===i) currentImageIdx=j;
+    else if(currentImageIdx===j) currentImageIdx=i;
+    renderThumbs(); renderMainImage(); await saveCurrentTeam();
+  }));
 }
 function openLightbox(src){
   const root = document.getElementById('lightboxRoot');
@@ -899,6 +750,49 @@ document.getElementById('bulkAddBtn').addEventListener('click', async ()=>{
   renderRoster();
 });
 
+/* ---------- CSV EXPORT ---------- */
+function csvEscape(v){
+  const s = String(v??'');
+  return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
+}
+document.getElementById('exportCsvBtn').addEventListener('click', async ()=>{
+  const btn = document.getElementById('exportCsvBtn');
+  const oldText = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Exporting…';
+  try{
+    const {data: teamRows, error} = await supabase.from('teams')
+      .select('number,name,final,finalized,scores,mult').eq('division', division);
+    if(error) throw error;
+    const sections = visibleSections();
+    const headers = ['Team #','Name','Status', ...sections.map(s=>`${s.id} - ${s.title}`), 'Raw Total','Multiplier','Final Score'];
+    const rows = [headers];
+    (teamRows||[]).slice().sort((a,b)=>teamNumericValue(a.number)-teamNumericValue(b.number)).forEach(t=>{
+      const status = t.finalized ? 'Finalized' : (t.final!=null ? 'In Progress' : 'Not started');
+      const tScores = t.scores || {};
+      const secTotals = sections.map(sec=>{
+        const vis = sec.items.filter(isVisible);
+        return vis.reduce((s,it)=>s+(tScores[it.id]??0),0);
+      });
+      const raw = secTotals.reduce((a,b)=>a+b,0);
+      const m = t.mult || {};
+      const multVal = (m.materials?0.95:1) * (m.fake?0.25:1) * Number(m.offTopic ?? 1);
+      rows.push([t.number, t.name||'', status, ...secTotals, raw, multVal.toFixed(2), t.final!=null?t.final.toFixed(2):'']);
+    });
+    const csv = rows.map(r=>r.map(csvEscape).join(',')).join('\r\n');
+    const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `rickards-division-${division}-scores.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 1000);
+  }catch(err){
+    console.error('export failed', err);
+    alert('Export failed — check your connection and try again.');
+  }finally{
+    btn.disabled = false; btn.textContent = oldText;
+  }
+});
+
 async function deleteTeam(number){
   if(!confirm(`Delete team ${number} entirely? This removes its scores, report, and any uploaded photos. This cannot be undone.`)) return;
   if(currentTeamNumber===number){
@@ -918,7 +812,7 @@ async function deleteTeam(number){
 async function selectTeamForGrading(number){
   await flushPendingSave();
   currentTeamNumber = number;
-  scores={}; images=[]; finalized=false; currentSectionIdx=0; currentImageIdx=0; sectionPageIndex={}; cropMode=false;
+  scores={}; images=[]; finalized=false; currentSectionIdx=0; currentImageIdx=0;
   updateSaveStatus('');
   document.getElementById('finalizedNote').style.display='none';
   dropZone.classList.remove('disabled');
@@ -929,7 +823,6 @@ async function selectTeamForGrading(number){
       scores = d.scores||{};
       finalized = !!d.finalized;
       images = (d.images||[]).map(im=>({mediaType:im.mediaType, url:im.url, storagePath:im.storagePath}));
-      sectionPageIndex = d.section_pages || {};
       if(d.mult){
         document.getElementById('multMaterials').checked = !!d.mult.materials;
         document.getElementById('multFake').checked = !!d.mult.fake;
@@ -946,9 +839,6 @@ async function selectTeamForGrading(number){
   }catch(e){ console.error(e); }
   renderRoster();
   document.getElementById('gradingArea').style.display='block';
-  const firstSec = visibleSections()[0];
-  const firstView = firstSec ? getSectionView(firstSec.id) : null;
-  currentImageIdx = (firstView!=null && firstView.page<images.length) ? firstView.page : 0;
   renderThumbs(); renderMainImage();
   renderSectionStepper(); updateTotals();
   updateUrl();
@@ -973,7 +863,6 @@ async function saveCurrentTeam(){
     finalized,
     final: rosterEntry?.final ?? null,
     images: images.map(im=>({mediaType:im.mediaType, url:im.url, storagePath:im.storagePath})),
-    section_pages: sectionPageIndex,
     mult:{
       materials: document.getElementById('multMaterials').checked,
       fake: document.getElementById('multFake').checked,
