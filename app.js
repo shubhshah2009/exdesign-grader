@@ -352,7 +352,7 @@ function renderSectionStepper(){
       return `<button class="scale-btn large ${sel}" data-item="${item.id}" data-val="${v}">${v}</button>`;
     }).join('');
     const guideHTML = item.guide ? `<div class="stepper-item-guide">${escapeHtml(item.guide)}</div>` : '';
-    return `<div class="stepper-item" tabindex="0"><div class="stepper-item-label">${item.label}</div>${guideHTML}<div class="stepper-item-scale">${scaleHTML}</div></div>`;
+    return `<div class="stepper-item" tabindex="0" data-item-id="${item.id}"><div class="stepper-item-label">${item.label}</div>${guideHTML}<div class="stepper-item-scale">${scaleHTML}</div></div>`;
   }).join('');
 
   root.innerHTML = `
@@ -374,21 +374,36 @@ function renderSectionStepper(){
     const id=b.dataset.item, val=Number(b.dataset.val);
     scores[id] = (scores[id]===val) ? null : val;
     renderSectionStepper(); updateTotals(); queueSave();
+    // re-render rebuilds the DOM, which drops focus — restore it to the same
+    // item (by id) so repeated keyboard scoring keeps working on it.
+    const refocus = root.querySelector(`.stepper-item[data-item-id="${id}"]`);
+    if(refocus) refocus.focus();
   }));
-  document.getElementById('prevSectionBtn').addEventListener('click',()=>{ if(currentSectionIdx>0) goToSection(currentSectionIdx-1); });
-  document.getElementById('nextSectionBtn').addEventListener('click',()=>{ if(currentSectionIdx<sections.length-1) goToSection(currentSectionIdx+1); });
+  document.getElementById('prevSectionBtn').addEventListener('click',()=>{ if(currentSectionIdx>0) goToSection(currentSectionIdx-1,'prev'); });
+  document.getElementById('nextSectionBtn').addEventListener('click',()=>{ if(currentSectionIdx<sections.length-1) goToSection(currentSectionIdx+1,'next'); });
 }
 
-function goToSection(idx){
+function goToSection(idx, direction){
   currentSectionIdx = idx;
   const sec = visibleSections()[idx];
-  const pinned = sec ? sectionPageIndex[sec.id] : null;
-  if(pinned!=null && pinned<images.length){
-    currentImageIdx = pinned;
+  if(sec){
+    const pinned = sectionPageIndex[sec.id];
+    if(pinned!=null && pinned<images.length){
+      currentImageIdx = pinned;
+    } else {
+      if(direction==='next' && currentImageIdx<images.length-1) currentImageIdx++;
+      else if(direction==='prev' && currentImageIdx>0) currentImageIdx--;
+      // else (direct tab-click jump, no pin yet): carry forward whatever page
+      // is showing rather than guessing.
+      //
+      // Either way, remember this as the section's page now, on first visit —
+      // so coming back to this section later (Next, Previous, or a tab click)
+      // always shows the same page consistently, not a re-derived guess that
+      // could differ depending on which direction you approached it from.
+      sectionPageIndex[sec.id] = currentImageIdx;
+      queueSave();
+    }
   }
-  // else: carry forward whatever page is currently showing — most consecutive
-  // sections live on the same or a nearby report page, so don't jump around
-  // until the judge deliberately flips to a different page (which gets pinned).
   renderSectionStepper();
   renderMainImage(); renderThumbs();
 }
@@ -477,7 +492,7 @@ prevPageBtn.addEventListener('click',()=>{ if(currentImageIdx>0){ currentImageId
 nextPageBtn.addEventListener('click',()=>{ if(currentImageIdx<images.length-1){ currentImageIdx++; pinCurrentPage(); renderMainImage(); renderThumbs(); } });
 
 function pinCurrentPage(){
-  const sec = SECTIONS()[currentSectionIdx];
+  const sec = visibleSections()[currentSectionIdx];
   if(sec){ sectionPageIndex[sec.id] = currentImageIdx; queueSave(); }
 }
 
@@ -824,7 +839,7 @@ document.addEventListener('keydown', (e)=>{
     const itemEl = document.activeElement.closest('.stepper-item') || root.querySelector('.stepper-item');
     if(itemEl){
       const btn = itemEl.querySelector(`.scale-btn[data-val="${val}"]`);
-      if(btn){ btn.click(); btn.focus(); e.preventDefault(); }
+      if(btn){ btn.click(); e.preventDefault(); } // click handler re-focuses the item after re-render
     }
   } else if(e.key==='ArrowRight'){
     const btn = document.getElementById('nextSectionBtn');
