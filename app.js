@@ -299,7 +299,9 @@ const TIEBREAK = {
 const DIVISIONS = { B: SECTIONS_B, C: SECTIONS_C };
 
 /* ---------- APP STATE ---------- */
-let division = localStorage_safeGet('last-division') || 'B';
+const urlParams = new URLSearchParams(location.search);
+let division = urlParams.get('division') || localStorage_safeGet('last-division') || 'B';
+if(division!=='B' && division!=='C') division = 'B';
 let level = 'regional';
 let roster = [];
 let currentTeamNumber = null;
@@ -307,11 +309,13 @@ let scores = {};
 let images = [];        // in-memory working set: [{mediaType, base64, url?, storagePath?}]
 let finalized = false;
 let saveTimer = null;
+let pendingSave = false;
 let currentSectionIdx = 0;
 let currentImageIdx = 0;
 let sectionPageIndex = {}; // {sectionId: imageIdx} - "pinned" page per rubric section
 
 function SECTIONS(){ return DIVISIONS[division]; }
+function visibleSections(){ return SECTIONS().filter(sec=>sec.items.some(isVisible)); }
 function isVisible(item){ return !(level==='regional' && item.stateOnly); }
 function effScale(item){
   if(level==='regional' && item.regionalMax!=null) return item.scale.filter(v=>v<=item.regionalMax);
@@ -330,8 +334,9 @@ function localStorage_safeSet(k,v){ try{ localStorage.setItem(k,v); }catch(e){} 
 /* ---------- SECTION STEPPER RENDER ---------- */
 const root = document.getElementById('sectionStepper');
 function renderSectionStepper(){
-  const sections = SECTIONS();
+  const sections = visibleSections();
   if(currentSectionIdx>=sections.length) currentSectionIdx = sections.length-1;
+  if(currentSectionIdx<0) currentSectionIdx = 0;
   const sec = sections[currentSectionIdx];
   const visItems = sec.items.filter(isVisible);
   const secMax = visItems.reduce((s,it)=>s+effMax(it),0);
@@ -347,7 +352,7 @@ function renderSectionStepper(){
       return `<button class="scale-btn large ${sel}" data-item="${item.id}" data-val="${v}">${v}</button>`;
     }).join('');
     const guideHTML = item.guide ? `<div class="stepper-item-guide">${escapeHtml(item.guide)}</div>` : '';
-    return `<div class="stepper-item"><div class="stepper-item-label">${item.label}</div>${guideHTML}<div class="stepper-item-scale">${scaleHTML}</div></div>`;
+    return `<div class="stepper-item" tabindex="0"><div class="stepper-item-label">${item.label}</div>${guideHTML}<div class="stepper-item-scale">${scaleHTML}</div></div>`;
   }).join('');
 
   root.innerHTML = `
@@ -376,11 +381,23 @@ function renderSectionStepper(){
 
 function goToSection(idx){
   currentSectionIdx = idx;
-  const sec = SECTIONS()[idx];
-  const pinned = sectionPageIndex[sec.id];
-  currentImageIdx = (pinned!=null && pinned<images.length) ? pinned : Math.min(idx, Math.max(0,images.length-1));
+  const sec = visibleSections()[idx];
+  const pinned = sec ? sectionPageIndex[sec.id] : null;
+  if(pinned!=null && pinned<images.length){
+    currentImageIdx = pinned;
+  }
+  // else: carry forward whatever page is currently showing — most consecutive
+  // sections live on the same or a nearby report page, so don't jump around
+  // until the judge deliberately flips to a different page (which gets pinned).
   renderSectionStepper();
   renderMainImage(); renderThumbs();
+}
+
+function reconcileSectionIndex(prevSectionId){
+  const sections = visibleSections();
+  let idx = sections.findIndex(s=>s.id===prevSectionId);
+  if(idx===-1) idx = Math.min(currentSectionIdx, sections.length-1);
+  currentSectionIdx = Math.max(0, idx);
 }
 
 function updateTotals(){
@@ -410,7 +427,7 @@ function updateReport(p1max,p2max,raw,mult,final){
   lines.push(`Rickards Invitational — Experimental Design (Division ${division})`);
   lines.push(`Team ${currentTeamNumber||'—'}${teamName?' — '+teamName:''}`);
   lines.push('');
-  SECTIONS().forEach(sec=>{
+  visibleSections().forEach(sec=>{
     const vis = sec.items.filter(isVisible);
     const max = vis.reduce((s,it)=>s+effMax(it),0);
     const got = vis.reduce((s,it)=>s+(scores[it.id]??0),0);
@@ -432,9 +449,11 @@ document.getElementById('copyReportBtn').addEventListener('click', async ()=>{
 
 document.getElementById('levelToggle').addEventListener('click',(e)=>{
   const btn=e.target.closest('button'); if(!btn) return;
+  const prevSecId = visibleSections()[currentSectionIdx]?.id;
   level = btn.dataset.level;
   document.querySelectorAll('#levelToggle button').forEach(b=>b.classList.toggle('active',b===btn));
   saveLevel();
+  reconcileSectionIndex(prevSecId);
   renderSectionStepper(); updateTotals(); queueSave();
 });
 ['multMaterials','multFake'].forEach(id=>document.getElementById(id).addEventListener('change',()=>{updateTotals(); queueSave();}));
@@ -576,16 +595,35 @@ document.getElementById('finalizeBtn').addEventListener('click', async ()=>{
   if(paths.length){ try{ await supabase.storage.from(PHOTOS_BUCKET).remove(paths); }catch(err){ console.warn(err); } }
   images = [];
   finalized = true;
+  const rosterEntry = roster.find(r=>r.number===currentTeamNumber);
+  if(rosterEntry) rosterEntry.finalized = true;
   await saveCurrentTeam();
   closeGradingView();
 });
 
+// Cancels any pending debounced save without flushing it — use this when the
+// team's row is being deleted or was just explicitly saved (finalize), so we
+// don't risk writing stale/unwanted data back. For switching away from a team
+// or division with possibly-unsaved edits, call flushPendingSave() first instead.
 function closeGradingView(){
   currentTeamNumber = null;
-  clearTimeout(saveTimer);
+  clearTimeout(saveTimer); saveTimer = null; pendingSave = false;
+  updateSaveStatus('');
   document.getElementById('gradingArea').style.display='none';
   renderRoster();
+  updateUrl();
 }
+
+async function flushPendingSave(){
+  if(saveTimer){
+    clearTimeout(saveTimer); saveTimer = null;
+    await saveCurrentTeam();
+  }
+}
+
+window.addEventListener('beforeunload', (e)=>{
+  if(pendingSave){ e.preventDefault(); e.returnValue = ''; }
+});
 
 /* ---------- SUPABASE: DIVISION / LEVEL / ROSTER ---------- */
 const divisionToggle = document.getElementById('divisionToggle');
@@ -595,6 +633,7 @@ divisionToggle.addEventListener('click', async (e)=>{
 });
 
 async function selectDivision(div){
+  await flushPendingSave();
   division = div;
   localStorage_safeSet('last-division', div);
   document.querySelectorAll('#divisionToggle button').forEach(b=>b.classList.toggle('active', b.dataset.division===div));
@@ -616,7 +655,7 @@ async function saveLevel(){
 }
 
 async function refreshRoster(){
-  const {data: teamRows, error} = await supabase.from('teams').select('number,name,final,finalized').eq('division', division);
+  const {data: teamRows, error} = await supabase.from('teams').select('number,name,final,finalized,scores').eq('division', division);
   if(error){ console.error(error); roster=[]; }
   else roster = teamRows || [];
   renderRoster();
@@ -627,11 +666,13 @@ function renderRoster(){
   const empty = document.getElementById('rosterEmpty');
   list.innerHTML='';
   empty.style.display = roster.length ? 'none':'block';
+  const visibleIds = visibleSections().flatMap(s=>s.items.filter(isVisible)).map(it=>it.id);
   roster.slice().sort((a,b)=> (a.number||'').localeCompare(b.number||'', undefined, {numeric:true})).forEach(t=>{
     const row = document.createElement('div');
     row.className = 'roster-row' + (t.number===currentTeamNumber?' active':'');
     const status = t.finalized ? 'Finalized' : (t.final!=null ? 'In progress' : 'Not started');
-    row.innerHTML = `<span class="rnum mono">${escapeHtml(t.number)}</span><span class="rname">${escapeHtml(t.name||'')}</span><span class="rstatus">${status}</span><span class="rscore mono">${t.final!=null?t.final.toFixed(2):'— pts'}</span><button class="btn small ghost" data-num="${t.number}">Grade</button><button class="btn small danger" data-del="${t.number}">Delete</button>`;
+    const scoredCount = visibleIds.filter(id=>t.scores?.[id]!=null).length;
+    row.innerHTML = `<span class="rnum mono">${escapeHtml(t.number)}</span><span class="rname">${escapeHtml(t.name||'')}</span><span class="rstatus">${status}</span><span class="rprogress mono">${scoredCount}/${visibleIds.length}</span><span class="rscore mono">${t.final!=null?t.final.toFixed(2):'— pts'}</span><button class="btn small ghost" data-num="${t.number}">Grade</button><button class="btn small danger" data-del="${t.number}">Delete</button>`;
     list.appendChild(row);
   });
   list.querySelectorAll('button[data-num]').forEach(b=>b.addEventListener('click',()=>selectTeamForGrading(b.dataset.num)));
@@ -656,6 +697,11 @@ document.getElementById('addTeamBtn').addEventListener('click', async ()=>{
 
 async function deleteTeam(number){
   if(!confirm(`Delete team ${number} entirely? This removes its scores, report, and any uploaded photos. This cannot be undone.`)) return;
+  if(currentTeamNumber===number){
+    // Cancel (don't flush) any pending debounced save — we're about to delete
+    // this row, so writing stale data back to it would just resurrect it.
+    clearTimeout(saveTimer); saveTimer = null; pendingSave = false;
+  }
   const {data: d} = await supabase.from('teams').select('images').eq('division', division).eq('number', number).maybeSingle();
   const paths = (d?.images||[]).filter(im=>im.storagePath).map(im=>im.storagePath);
   if(paths.length){ try{ await supabase.storage.from(PHOTOS_BUCKET).remove(paths); }catch(err){ console.warn(err); } }
@@ -666,8 +712,10 @@ async function deleteTeam(number){
 }
 
 async function selectTeamForGrading(number){
+  await flushPendingSave();
   currentTeamNumber = number;
   scores={}; images=[]; finalized=false; currentSectionIdx=0; currentImageIdx=0; sectionPageIndex={};
+  updateSaveStatus('');
   document.getElementById('finalizedNote').style.display='none';
   dropZone.classList.remove('disabled');
   try{
@@ -694,19 +742,24 @@ async function selectTeamForGrading(number){
   }catch(e){ console.error(e); }
   renderRoster();
   document.getElementById('gradingArea').style.display='block';
-  const pinned = sectionPageIndex[SECTIONS()[0].id];
+  const firstSec = visibleSections()[0];
+  const pinned = firstSec ? sectionPageIndex[firstSec.id] : null;
   currentImageIdx = (pinned!=null && pinned<images.length) ? pinned : 0;
   renderThumbs(); renderMainImage();
   renderSectionStepper(); updateTotals();
+  updateUrl();
 }
 
 function queueSave(){
   if(!currentTeamNumber) return;
+  pendingSave = true;
+  updateSaveStatus('pending');
   clearTimeout(saveTimer);
   saveTimer = setTimeout(saveCurrentTeam, 900);
 }
 async function saveCurrentTeam(){
   if(!currentTeamNumber) return;
+  saveTimer = null;
   const rosterEntry = roster.find(r=>r.number===currentTeamNumber);
   const record = {
     division,
@@ -724,17 +777,63 @@ async function saveCurrentTeam(){
     },
     updated_at: new Date().toISOString()
   };
+  updateSaveStatus('saving');
   try{
-    await supabase.from('teams').upsert(record, {onConflict:'division,number'});
-  }catch(e){ console.error('save failed', e); }
+    const {error} = await supabase.from('teams').upsert(record, {onConflict:'division,number'});
+    if(error) throw error;
+    pendingSave = false;
+    updateSaveStatus('saved');
+  }catch(e){
+    console.error('save failed', e);
+    updateSaveStatus('error');
+    saveTimer = setTimeout(saveCurrentTeam, 4000); // retry with backoff
+  }
+}
+function updateSaveStatus(state){
+  const el = document.getElementById('saveStatus');
+  if(!el) return;
+  el.className = 'save-status';
+  if(state==='pending' || state==='saving'){ el.textContent='Saving…'; }
+  else if(state==='saved'){ el.textContent='Saved ✓'; el.classList.add('ok'); }
+  else if(state==='error'){ el.textContent='⚠ Save failed — retrying'; el.classList.add('err'); }
+  else{ el.textContent=''; }
+}
+function updateUrl(){
+  const params = new URLSearchParams();
+  params.set('division', division);
+  if(currentTeamNumber) params.set('team', currentTeamNumber);
+  history.replaceState(null, '', location.pathname + '?' + params.toString());
 }
 function updateRosterScoreDisplay(final){
   const t = roster.find(r=>r.number===currentTeamNumber);
   if(!t) return;
   t.final = final;
   t.finalized = finalized;
+  t.scores = scores;
   renderRoster();
 }
+
+/* ---------- KEYBOARD SHORTCUTS ---------- */
+document.addEventListener('keydown', (e)=>{
+  const tag = (document.activeElement.tagName||'').toLowerCase();
+  if(tag==='input' || tag==='textarea') return; // don't hijack typing in text fields
+  if(document.getElementById('gradingArea').style.display==='none') return;
+
+  if(e.key>='0' && e.key<='9'){
+    const val = Number(e.key);
+    const itemEl = document.activeElement.closest('.stepper-item') || root.querySelector('.stepper-item');
+    if(itemEl){
+      const btn = itemEl.querySelector(`.scale-btn[data-val="${val}"]`);
+      if(btn){ btn.click(); btn.focus(); e.preventDefault(); }
+    }
+  } else if(e.key==='ArrowRight'){
+    const btn = document.getElementById('nextSectionBtn');
+    if(btn && !btn.disabled){ btn.click(); e.preventDefault(); }
+  } else if(e.key==='ArrowLeft'){
+    const btn = document.getElementById('prevSectionBtn');
+    if(btn && !btn.disabled){ btn.click(); e.preventDefault(); }
+  }
+});
 
 /* ---------- INIT ---------- */
 (async function init(){
@@ -745,4 +844,7 @@ function updateRosterScoreDisplay(final){
   await loadLevel();
   renderSectionStepper(); updateTotals();
   await refreshRoster();
+  const urlTeam = urlParams.get('team');
+  if(urlTeam && roster.some(r=>r.number===urlTeam)) await selectTeamForGrading(urlTeam);
+  updateUrl();
 })();
