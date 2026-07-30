@@ -383,25 +383,43 @@ function renderSectionStepper(){
   document.getElementById('nextSectionBtn').addEventListener('click',()=>{ if(currentSectionIdx<sections.length-1) goToSection(currentSectionIdx+1,'next'); });
 }
 
+// sectionPageIndex[sectionId] is either the legacy shape (a plain page-index
+// number, from data saved before cropping existed) or the current shape
+// {page, crop:{x,y,w,h}|null}. getSectionView() normalizes both to the latter.
+function getSectionView(sectionId){
+  const v = sectionPageIndex[sectionId];
+  if(v==null) return null;
+  if(typeof v === 'number') return {page: v, crop: null};
+  return v;
+}
+function setSectionPage(sectionId, page){
+  sectionPageIndex[sectionId] = {page, crop: null};
+  queueSave();
+}
+function setSectionCrop(sectionId, crop){
+  const existing = getSectionView(sectionId);
+  sectionPageIndex[sectionId] = {page: existing?.page ?? currentImageIdx, crop};
+  queueSave();
+}
+
 function goToSection(idx, direction){
   currentSectionIdx = idx;
   const sec = visibleSections()[idx];
   if(sec){
-    const pinned = sectionPageIndex[sec.id];
-    if(pinned!=null && pinned<images.length){
-      currentImageIdx = pinned;
+    const view = getSectionView(sec.id);
+    if(view!=null && view.page<images.length){
+      currentImageIdx = view.page;
     } else {
       if(direction==='next' && currentImageIdx<images.length-1) currentImageIdx++;
       else if(direction==='prev' && currentImageIdx>0) currentImageIdx--;
-      // else (direct tab-click jump, no pin yet): carry forward whatever page
-      // is showing rather than guessing.
+      // else (direct tab-click jump, no page recorded yet): carry forward
+      // whatever page is showing rather than guessing.
       //
       // Either way, remember this as the section's page now, on first visit —
       // so coming back to this section later (Next, Previous, or a tab click)
       // always shows the same page consistently, not a re-derived guess that
       // could differ depending on which direction you approached it from.
-      sectionPageIndex[sec.id] = currentImageIdx;
-      queueSave();
+      setSectionPage(sec.id, currentImageIdx);
     }
   }
   renderSectionStepper();
@@ -482,6 +500,7 @@ const dropZone=document.getElementById('dropZone'), fileInput=document.getElemen
 const imgThumbs=document.getElementById('imgThumbs');
 const mainImageWrap=document.getElementById('mainImageWrap'), pageIndicator=document.getElementById('pageIndicator');
 const prevPageBtn=document.getElementById('prevPageBtn'), nextPageBtn=document.getElementById('nextPageBtn');
+const cropModeBtn=document.getElementById('cropModeBtn'), resetCropBtn=document.getElementById('resetCropBtn');
 
 dropZone.addEventListener('click',()=>{ if(!finalized) fileInput.click(); });
 dropZone.addEventListener('dragover',(e)=>{e.preventDefault(); if(!finalized) dropZone.classList.add('dragover');});
@@ -493,7 +512,88 @@ nextPageBtn.addEventListener('click',()=>{ if(currentImageIdx<images.length-1){ 
 
 function pinCurrentPage(){
   const sec = visibleSections()[currentSectionIdx];
-  if(sec){ sectionPageIndex[sec.id] = currentImageIdx; queueSave(); }
+  if(sec) setSectionPage(sec.id, currentImageIdx); // manual page nav always clears any crop for this section
+}
+
+/* ---------- CROP TOOL ---------- */
+let cropMode = false;
+let cropDragStart = null, cropDragBox = null;
+
+cropModeBtn.addEventListener('click', ()=>{
+  if(images.length===0) return;
+  cropMode = !cropMode;
+  renderMainImage();
+});
+resetCropBtn.addEventListener('click', ()=>{
+  const sec = visibleSections()[currentSectionIdx];
+  if(sec) setSectionCrop(sec.id, null);
+  renderMainImage();
+});
+
+mainImageWrap.addEventListener('mousedown', (e)=>{
+  if(!cropMode) return;
+  const img = mainImageWrap.querySelector('img');
+  if(!img) return;
+  const rect = mainImageWrap.getBoundingClientRect();
+  cropDragStart = {x: e.clientX-rect.left, y: e.clientY-rect.top};
+  cropDragBox = document.createElement('div');
+  cropDragBox.className = 'crop-box';
+  mainImageWrap.appendChild(cropDragBox);
+  updateCropDragBox(e);
+  document.addEventListener('mousemove', onCropDrag);
+  document.addEventListener('mouseup', endCropDrag);
+  e.preventDefault();
+});
+function onCropDrag(e){ updateCropDragBox(e); }
+function updateCropDragBox(e){
+  const rect = mainImageWrap.getBoundingClientRect();
+  const x2 = Math.max(0, Math.min(rect.width, e.clientX-rect.left));
+  const y2 = Math.max(0, Math.min(rect.height, e.clientY-rect.top));
+  const x = Math.min(cropDragStart.x, x2), y = Math.min(cropDragStart.y, y2);
+  const w = Math.abs(x2-cropDragStart.x), h = Math.abs(y2-cropDragStart.y);
+  cropDragBox.style.left = x+'px'; cropDragBox.style.top = y+'px';
+  cropDragBox.style.width = w+'px'; cropDragBox.style.height = h+'px';
+}
+function endCropDrag(e){
+  document.removeEventListener('mousemove', onCropDrag);
+  document.removeEventListener('mouseup', endCropDrag);
+  const img = mainImageWrap.querySelector('img');
+  if(img && cropDragBox){
+    const boxRect = cropDragBox.getBoundingClientRect();
+    const imgRect = img.getBoundingClientRect();
+    let x = (boxRect.left - imgRect.left) / imgRect.width;
+    let y = (boxRect.top - imgRect.top) / imgRect.height;
+    let w = boxRect.width / imgRect.width;
+    let h = boxRect.height / imgRect.height;
+    x = Math.max(0, Math.min(1, x)); y = Math.max(0, Math.min(1, y));
+    w = Math.min(1-x, w); h = Math.min(1-y, h);
+    if(w>0.03 && h>0.03){
+      const sec = visibleSections()[currentSectionIdx];
+      if(sec) setSectionCrop(sec.id, {x,y,w,h});
+    }
+  }
+  if(cropDragBox) cropDragBox.remove();
+  cropDragBox = null; cropDragStart = null;
+  cropMode = false;
+  renderMainImage();
+}
+function cropImageToDataUrl(src, crop){
+  return new Promise((resolve, reject)=>{
+    const img = new Image();
+    img.crossOrigin = 'anonymous'; // needed to read pixels back out via canvas for hosted (Supabase Storage) photos
+    img.onload = ()=>{
+      try{
+        const sx = crop.x*img.naturalWidth, sy = crop.y*img.naturalHeight;
+        const sw = Math.max(1, crop.w*img.naturalWidth), sh = Math.max(1, crop.h*img.naturalHeight);
+        const canvas = document.createElement('canvas');
+        canvas.width = sw; canvas.height = sh;
+        canvas.getContext('2d').drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+        resolve(canvas.toDataURL('image/jpeg', 0.85));
+      }catch(err){ reject(err); }
+    };
+    img.onerror = ()=>reject(new Error('crop image failed to load'));
+    img.src = src;
+  });
 }
 
 function compressImage(file){
@@ -542,22 +642,53 @@ async function handleFiles(list){
   renderThumbs(); renderMainImage();
   await uploadNewImagesToStorage();
 }
-function renderMainImage(){
+let mainImageRenderGen = 0;
+async function renderMainImage(){
+  const gen = ++mainImageRenderGen;
   if(images.length===0){
     mainImageWrap.innerHTML = '<div class="empty-note">No pages uploaded yet.</div>';
     pageIndicator.textContent = '';
     prevPageBtn.disabled = true; nextPageBtn.disabled = true;
+    cropModeBtn.style.display = 'none'; resetCropBtn.style.display = 'none';
+    mainImageWrap.classList.remove('crop-active');
     return;
   }
   if(currentImageIdx>=images.length) currentImageIdx = images.length-1;
   if(currentImageIdx<0) currentImageIdx = 0;
   const im = images[currentImageIdx];
-  const src = im.url || `data:${im.mediaType};base64,${im.base64}`;
-  mainImageWrap.innerHTML = `<img src="${src}">`;
-  mainImageWrap.querySelector('img').addEventListener('click',()=>openLightbox(src));
-  pageIndicator.textContent = `Page ${currentImageIdx+1} of ${images.length}`;
+  const fullSrc = im.url || `data:${im.mediaType};base64,${im.base64}`;
+  const sec = visibleSections()[currentSectionIdx];
+  const view = sec ? getSectionView(sec.id) : null;
+  const hasCrop = !!(view && view.crop);
+  const showCrop = hasCrop && !cropMode;
+
+  let displaySrc = fullSrc;
+  if(showCrop){
+    try{
+      displaySrc = await cropImageToDataUrl(fullSrc, view.crop);
+    }catch(err){
+      console.error('crop render failed, showing full page instead', err);
+      displaySrc = fullSrc;
+    }
+    if(gen!==mainImageRenderGen) return; // a newer render started while this awaited
+  }
+
+  mainImageWrap.classList.toggle('crop-active', cropMode);
+  mainImageWrap.innerHTML = `<img src="${displaySrc}">`;
+  if(cropMode){
+    const hint = document.createElement('div');
+    hint.className = 'crop-hint';
+    hint.textContent = 'Drag to select the region for this section';
+    mainImageWrap.appendChild(hint);
+  } else {
+    mainImageWrap.querySelector('img').addEventListener('click',()=>openLightbox(fullSrc));
+  }
+  pageIndicator.textContent = `Page ${currentImageIdx+1} of ${images.length}${showCrop?' (cropped to section)':''}`;
   prevPageBtn.disabled = currentImageIdx===0;
   nextPageBtn.disabled = currentImageIdx===images.length-1;
+  cropModeBtn.style.display = 'inline-block';
+  cropModeBtn.textContent = cropMode ? 'Cancel Crop' : '✂ Crop to This Section';
+  resetCropBtn.style.display = (hasCrop && !cropMode) ? 'inline-block' : 'none';
 }
 function renderThumbs(){
   imgThumbs.innerHTML='';
@@ -575,8 +706,19 @@ function renderThumbs(){
     if(im.storagePath){ try{ await supabase.storage.from(PHOTOS_BUCKET).remove([im.storagePath]); }catch(err){ console.warn(err); } }
     images.splice(i,1);
     if(currentImageIdx>=i) currentImageIdx = Math.max(0, currentImageIdx-1);
+    reindexSectionPagesAfterDelete(i);
     renderThumbs(); renderMainImage(); await saveCurrentTeam();
   }));
+}
+// Deleting page i shifts every later page down by one; any section pinned to
+// exactly page i loses that page (falls back to re-deriving next visit), and
+// anything pinned past it shifts down to match, crop rectangle included.
+function reindexSectionPagesAfterDelete(deletedIdx){
+  for(const secId of Object.keys(sectionPageIndex)){
+    const v = getSectionView(secId);
+    if(v.page === deletedIdx) delete sectionPageIndex[secId];
+    else if(v.page > deletedIdx) sectionPageIndex[secId] = {page: v.page-1, crop: v.crop};
+  }
 }
 function openLightbox(src){
   const root = document.getElementById('lightboxRoot');
@@ -676,13 +818,35 @@ async function refreshRoster(){
   renderRoster();
 }
 
+// Team numbers are normalized to <division-letter><digits> (e.g. "14" -> "B14")
+// so the roster always sorts cleanly and consistently, regardless of how the
+// judge typed it in (with/without the letter, wrong case, etc.).
+function normalizeTeamNumber(raw){
+  const digits = (raw||'').replace(/\D/g,'');
+  return digits ? division + digits : '';
+}
+function teamNumericValue(number){
+  const digits = (number||'').replace(/\D/g,'');
+  return digits ? parseInt(digits,10) : 0;
+}
+
+let rosterSearchQuery = '';
+document.getElementById('rosterSearch').addEventListener('input',(e)=>{
+  rosterSearchQuery = e.target.value.trim().toLowerCase();
+  renderRoster();
+});
+
 function renderRoster(){
   const list = document.getElementById('rosterList');
   const empty = document.getElementById('rosterEmpty');
   list.innerHTML='';
-  empty.style.display = roster.length ? 'none':'block';
   const visibleIds = visibleSections().flatMap(s=>s.items.filter(isVisible)).map(it=>it.id);
-  roster.slice().sort((a,b)=> (a.number||'').localeCompare(b.number||'', undefined, {numeric:true})).forEach(t=>{
+  const filtered = roster.filter(t=>{
+    if(!rosterSearchQuery) return true;
+    return (t.number||'').toLowerCase().includes(rosterSearchQuery) || (t.name||'').toLowerCase().includes(rosterSearchQuery);
+  });
+  empty.style.display = roster.length ? 'none':'block';
+  filtered.slice().sort((a,b)=> teamNumericValue(a.number) - teamNumericValue(b.number)).forEach(t=>{
     const row = document.createElement('div');
     row.className = 'roster-row' + (t.number===currentTeamNumber?' active':'');
     const status = t.finalized ? 'Finalized' : (t.final!=null ? 'In progress' : 'Not started');
@@ -695,7 +859,7 @@ function renderRoster(){
 }
 
 document.getElementById('addTeamBtn').addEventListener('click', async ()=>{
-  const number = document.getElementById('addNumber').value.trim();
+  const number = normalizeTeamNumber(document.getElementById('addNumber').value);
   const name = document.getElementById('addName').value.trim();
   if(!number) return;
   const existing = roster.find(r=>r.number===number);
@@ -708,6 +872,31 @@ document.getElementById('addTeamBtn').addEventListener('click', async ()=>{
   document.getElementById('addNumber').value=''; document.getElementById('addName').value='';
   renderRoster();
   selectTeamForGrading(number);
+});
+
+document.getElementById('bulkAddToggleBtn').addEventListener('click', ()=>{
+  const panel = document.getElementById('bulkAddPanel');
+  panel.style.display = panel.style.display==='none' ? 'flex' : 'none';
+});
+document.getElementById('bulkAddBtn').addEventListener('click', async ()=>{
+  const lines = document.getElementById('bulkAddText').value.split('\n').map(l=>l.trim()).filter(Boolean);
+  const records = [];
+  for(const line of lines){
+    const [rawNum, ...rest] = line.split(',');
+    const number = normalizeTeamNumber(rawNum);
+    if(!number) continue;
+    records.push({division, number, name: rest.join(',').trim()});
+  }
+  if(records.length===0) return;
+  records.forEach(r=>{
+    const existing = roster.find(x=>x.number===r.number);
+    if(existing) existing.name = r.name || existing.name;
+    else roster.push({number:r.number, name:r.name, final:null, finalized:false});
+  });
+  await supabase.from('teams').upsert(records, {onConflict:'division,number'});
+  document.getElementById('bulkAddText').value = '';
+  document.getElementById('bulkAddPanel').style.display = 'none';
+  renderRoster();
 });
 
 async function deleteTeam(number){
@@ -729,7 +918,7 @@ async function deleteTeam(number){
 async function selectTeamForGrading(number){
   await flushPendingSave();
   currentTeamNumber = number;
-  scores={}; images=[]; finalized=false; currentSectionIdx=0; currentImageIdx=0; sectionPageIndex={};
+  scores={}; images=[]; finalized=false; currentSectionIdx=0; currentImageIdx=0; sectionPageIndex={}; cropMode=false;
   updateSaveStatus('');
   document.getElementById('finalizedNote').style.display='none';
   dropZone.classList.remove('disabled');
@@ -758,8 +947,8 @@ async function selectTeamForGrading(number){
   renderRoster();
   document.getElementById('gradingArea').style.display='block';
   const firstSec = visibleSections()[0];
-  const pinned = firstSec ? sectionPageIndex[firstSec.id] : null;
-  currentImageIdx = (pinned!=null && pinned<images.length) ? pinned : 0;
+  const firstView = firstSec ? getSectionView(firstSec.id) : null;
+  currentImageIdx = (firstView!=null && firstView.page<images.length) ? firstView.page : 0;
   renderThumbs(); renderMainImage();
   renderSectionStepper(); updateTotals();
   updateUrl();

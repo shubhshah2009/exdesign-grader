@@ -40,10 +40,16 @@
   <div class="roster-card">
     <h3 id="rosterHeading">Roster — Division B</h3>
     <div class="roster-add">
-      <input id="addNumber" placeholder="Team #" style="width:90px;">
+      <input id="addNumber" placeholder="e.g. 14 → B14" style="width:100px;">
       <input id="addName" placeholder="Team / school name" style="width:220px;">
       <button class="btn small ghost" id="addTeamBtn">+ Add to roster</button>
+      <button class="btn small ghost" id="bulkAddToggleBtn">Bulk Add…</button>
     </div>
+    <div class="bulk-add" id="bulkAddPanel" style="display:none;">
+      <textarea id="bulkAddText" placeholder="One team per line: number, name&#10;e.g.&#10;14, Rickards High School&#10;15, Wakulla High School"></textarea>
+      <button class="btn small teal" id="bulkAddBtn">Add All</button>
+    </div>
+    <input id="rosterSearch" class="roster-search" placeholder="Search by team # or name…">
     <div class="roster-list" id="rosterList"></div>
     <div class="empty-note" id="rosterEmpty" style="display:none;">No teams yet — add one above, or just start grading and assign the number later.</div>
   </div>
@@ -58,6 +64,10 @@
           <button class="page-nav" id="prevPageBtn" aria-label="Previous page">‹</button>
           <div class="main-image-wrap" id="mainImageWrap"></div>
           <button class="page-nav" id="nextPageBtn" aria-label="Next page">›</button>
+        </div>
+        <div class="crop-controls">
+          <button class="btn small ghost" id="cropModeBtn">✂ Crop to This Section</button>
+          <button class="btn small ghost" id="resetCropBtn" style="display:none;">Show Full Page</button>
         </div>
         <div class="page-indicator" id="pageIndicator"></div>
         <div class="img-thumbs" id="imgThumbs"></div>
